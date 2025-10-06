@@ -6,7 +6,7 @@ use axum::{
 use serde::de::DeserializeOwned;
 use validator::Validate;
 
-use crate::utils::{validation_error, AppError};
+use crate::utils::error::{validation_error, AppError};
 
 pub struct ValidatedJson<T>(pub T);
 

@@ -7,7 +7,8 @@ use axum::{
 };
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
-use tracing::{info, Level};
+use tokio::signal;
+use tracing::{info, warn, Level};
 use tracing_subscriber;
 
 use rust_fintrack_backend::{
@@ -16,7 +17,7 @@ use rust_fintrack_backend::{
     repositories::{PostgresAuthRepository, PostgresPocketRepository, PostgresUserRepository, PostgresTransactionRepository, PostgresBudgetRepository},
     routes::{auth_routes, pocket_routes, user_routes, transaction_routes, budget_routes, account_summary_routes, expense_analytics_routes, income_analytics_routes},
     services::{AuthService, PocketService, UserService, TransactionService, BudgetService, AccountSummaryService, ExpenseAnalyticsService, IncomeAnalyticsService},
-    utils::CacheService,
+    utils::{CacheService, start_connection_monitoring},
 };
 
 #[tokio::main]
@@ -33,6 +34,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create database connection pool
     let pool = create_pool().await?;
     info!("Database connection pool created");
+
+    // Start connection monitoring
+    start_connection_monitoring(pool.clone()).await;
+    info!("Connection monitoring started");
 
     // Create Redis cache service
     let cache_service = CacheService::new(&config.redis).await;
@@ -70,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(income_analytics_routes().with_state(income_analytics_service))
         .layer(cors_layer())
         .layer(logging_layer())
-        .layer(Extension(pool))
+        .layer(Extension(pool.clone()))
         .layer(Extension(jwt_config))
         .layer(Extension(cache_service));
 
@@ -78,9 +83,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(&config.server_address()).await?;
     info!("Server listening on {}", config.server_address());
 
-    axum::serve(listener, app).await?;
+    // Setup graceful shutdown
+    let server = axum::serve(listener, app);
+    
+    // Handle shutdown signals
+    tokio::select! {
+        result = server => {
+            if let Err(err) = result {
+                warn!("Server error: {}", err);
+            }
+        }
+        _ = shutdown_signal() => {
+            info!("Shutdown signal received, starting graceful shutdown...");
+        }
+    }
 
+    // Close database pool gracefully
+    info!("Closing database connections...");
+    pool.close().await;
+    info!("Database connections closed");
+
+    info!("Server shutdown complete");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
 
 async fn health_check() -> Result<Json<Value>, StatusCode> {
