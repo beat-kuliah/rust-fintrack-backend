@@ -64,7 +64,7 @@ impl AuthRepository for PostgresAuthRepository {
 
     async fn find_user_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
         let row = sqlx::query(
-            "SELECT id, name, email, password, hide_balance, created_at, updated_at 
+            "SELECT id, email, password 
              FROM users WHERE email = $1"
         )
         .bind(email)
@@ -74,14 +74,16 @@ impl AuthRepository for PostgresAuthRepository {
 
         match row {
             Some(row) => {
+                // For auth purposes, we only need id, email, and password
+                // Other fields will be fetched separately if needed
                 let user = User {
                     id: row.get("id"),
-                    name: row.get("name"),
+                    name: String::new(), // Will be populated later if needed
                     email: row.get("email"),
                     password: row.get("password"),
-                    hide_balance: row.get("hide_balance"),
-                    created_at: row.get("created_at"),
-                    updated_at: row.get("updated_at"),
+                    hide_balance: false, // Default value
+                    created_at: chrono::Utc::now(), // Placeholder
+                    updated_at: chrono::Utc::now(), // Placeholder
                 };
                 Ok(Some(user))
             }
