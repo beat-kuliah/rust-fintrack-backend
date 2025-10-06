@@ -1,4 +1,5 @@
 use std::env;
+use crate::config::RedisConfig;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -6,6 +7,7 @@ pub struct AppConfig {
     pub jwt_secret: String,
     pub port: u16,
     pub host: String,
+    pub redis: RedisConfig,
 }
 
 impl AppConfig {
@@ -20,6 +22,7 @@ impl AppConfig {
                 .parse()?,
             host: env::var("HOST")
                 .unwrap_or_else(|_| "0.0.0.0".to_string()),
+            redis: RedisConfig::from_env(),
         })
     }
 
